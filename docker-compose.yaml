@@ -1,0 +1,86 @@
+# version: "3.9"
+
+services:
+  postgres:
+    image: postgres:14
+    container_name: prefect-postgres
+    restart: always
+    environment:
+      POSTGRES_USER: prefect
+      POSTGRES_PASSWORD: prefect
+      POSTGRES_DB: prefect
+    volumes:
+      - ${PREFECT_DIR}/postgresql/data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U prefect -d prefect"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - prefect-net
+
+  redis:
+    image: redis:7
+    container_name: prefect-redis
+    restart: always
+    volumes:
+      - ${PREFECT_DIR}/redis_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - prefect-net
+
+  prefect-server:
+    image: prefecthq/prefect:3-latest
+    container_name: prefect-server
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      PREFECT_API_DATABASE_CONNECTION_URL: postgresql+asyncpg://prefect:prefect@postgres:5432/prefect
+      PREFECT_SERVER_API_HOST: 0.0.0.0
+      PREFECT_SERVER_API_PORT: ${PORT}
+      PREFECT_API_URL: ${PREFECT_API_URL}
+      PREFECT_LOGGING_LEVEL: INFO
+      PREFECT_REDIS_MESSAGING_HOST: redis
+      PREFECT_REDIS_MESSAGING_PORT: 6379
+      PREFECT_REDIS_MESSAGING_DB: 0
+    command: ["prefect", "server", "start", "--host", "0.0.0.0", "--port", "${PORT}"]
+    ports:
+      - "${PORT}:${PORT}"
+    volumes:
+      - ${PREFECT_DIR}/prefect_data:/root/.prefect
+      - ${PREFECT_DIR}/logs:/root/logs
+    networks:
+      - prefect-net
+
+  prefect-services:
+    image: prefecthq/prefect:3-latest
+    container_name: prefect-services
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      PREFECT_API_DATABASE_CONNECTION_URL: postgresql+asyncpg://prefect:prefect@postgres:5432/prefect
+      PREFECT_REDIS_MESSAGING_HOST: redis
+      PREFECT_REDIS_MESSAGING_PORT: 6379
+      PREFECT_REDIS_MESSAGING_DB: 0
+    command: ["prefect", "server", "services", "start"]
+    networks:
+      - prefect-net
+
+networks:
+  prefect-net:
+    driver: bridge
+    # ipam: # mandatory in midas
+    #   config:
+    #     - subnet: 10.250.250.0/24
